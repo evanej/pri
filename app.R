@@ -151,6 +151,13 @@ ui <- page_fillable(
   title = "USASpending — PRI / LQ / Entropy Explorer",
   padding = 0,
   tags$style(HTML("
+    /* EDIT HERE to change the dashboard's font. Arial isn't a web font — no download
+       needed, it's just declared first and the browser uses it if installed (true on
+       basically every Mac/Windows machine), falling back to Helvetica/sans-serif. */
+    html, body, .controls-col, .bottom-pane, .leaflet-container, h1, h2, h3, h4, h5, h6,
+    label, button, select, input {
+      font-family: Arial, Helvetica, \"Helvetica Neue\", sans-serif !important;
+    }
     html, body { height: 100%; margin: 0; }
     .app-wrap { display: flex; flex-direction: column; height: 100vh; }
     .map-pane  { flex: 2 1 0; min-height: 0; }           /* ~2/3 of the screen */
@@ -313,10 +320,19 @@ server <- function(input, output, session) {
           TRUE                   ~ "Underserved"
         ))
     } else {
-      d <- typology
+      # typology has no pop column of its own — bring it in from county_info (built
+      # near the top of the file for the map tooltips) so dot sizing works here too.
+      d <- typology |> left_join(county_info |> select(fips, pop), by = "fips")
     }
     if (input$state != "All states") d <- d |> filter(state_abb == input$state)
-    d |> left_join(county_names, by = "fips")   # adds county_name, STUSPS for tooltips
+
+    # EDIT HERE to change dot sizing: log(pop) compresses the huge population range
+    # (a few counties in the millions, most in the thousands) so size differences stay
+    # subtle rather than a few metros dwarfing everything else. `to = c(4, 14)` is the
+    # rendered pixel-diameter range — widen it for more dramatic size variation.
+    d |>
+      left_join(county_names, by = "fips") |>   # adds county_name, STUSPS for tooltips
+      mutate(dot_size = scales::rescale(log(pmax(pop, 1)), to = c(4, 14)))
   })
 
   # Short legend labels for the typology view — the full strings ("High-LQ (A), high-diversity
@@ -342,7 +358,7 @@ server <- function(input, output, session) {
     # above — reference any of them inside glue(). PRI view and typology
     # view build separate `text =` strings since they're different data.
     if (input$quad_view == "pri") {
-      p <- plot_ly(d, x = ~RICH, y = ~OPP, color = ~quadrant, size = ~pop,
+      p <- plot_ly(d, x = ~RICH, y = ~OPP, color = ~quadrant,
                    type = "scatter", mode = "markers",
                    text = ~glue(
                      "<b>{county_name}, {STUSPS}</b><br>",
@@ -351,8 +367,7 @@ server <- function(input, output, session) {
                      "PRI: {round(PRI,2)} &nbsp; GROW: {round(GROW,2)}<br>",
                      "Population (avg.): {label_comma()(round(pop))}"
                    ), hoverinfo = "text",
-                   marker = list(sizemode = "area", sizeref = max(d$pop, na.rm = TRUE) / 900,
-                                opacity = 0.65)) |>
+                   marker = list(size = ~dot_size, opacity = 0.65)) |>
         layout(xaxis = list(title = "RICH (current intensity)", range = c(0, 1)),
                yaxis = list(title = "OPP (opportunity)", range = c(0, 1)),
                shapes = list(
@@ -360,6 +375,7 @@ server <- function(input, output, session) {
                  list(type = "line", x0 = 0, x1 = 1, y0 = .5, y1 = .5, line = list(dash = "dot", color = "grey"))
                ),
                margin = list(t = 10, b = 45, l = 60, r = 150),
+               font = list(family = "Arial, Helvetica, sans-serif"),
                legend = list(orientation = "v", x = 1.02, xanchor = "left", y = 0.5, yanchor = "middle",
                             font = list(size = 10)))
     } else {
@@ -373,10 +389,11 @@ server <- function(input, output, session) {
                      "Categories present: {n_cat} &nbsp; Total obligations: ",
                      "{label_currency(scale_cut = cut_short_scale())(total)}"
                    ), hoverinfo = "text",
-                   marker = list(opacity = 0.65, size = 8)) |>
+                   marker = list(size = ~dot_size, opacity = 0.65)) |>
         layout(xaxis = list(title = "LQ (focal PSC family)"),
                yaxis = list(title = "Entropy (diversification)"),
                margin = list(t = 10, b = 45, l = 60, r = 160),
+               font = list(family = "Arial, Helvetica, sans-serif"),
                legend = list(orientation = "v", x = 1.02, xanchor = "left", y = 0.5, yanchor = "middle",
                             font = list(size = 10)))
     }
