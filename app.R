@@ -113,14 +113,14 @@ year_choices  <- sort(unique(percap_yr$fy))
 
 # Fields selectable for the primary map. `pooled = TRUE` fields ignore the year slider.
 map_fields <- tibble::tribble(
-  ~key,             ~label,                                  ~pooled, ~palette,
-  "PRI",            "PRI composite (percentile)",             TRUE,  "inferno",
-  "RICH",           "RICH subindex (current intensity)",       TRUE,  "inferno",
-  "GROW",           "GROW subindex (growth + entrants)",       TRUE,  "inferno",
-  "OPP",            "OPP subindex (opportunity)",              TRUE,  "inferno",
-  "lq_fam",         "Location quotient (focal PSC family)",    TRUE,  "viridis",
-  "H",              "Entropy (spending diversification)",      TRUE,  "viridis",
-  "oblig_pos_pc_yr","Per-capita obligations (by year)",        FALSE, "magma"
+  ~key,             ~label,                                  ~pooled, ~palette,  ~reverse_pal,
+  "PRI",            "PRI composite (percentile)",             TRUE,  "inferno", TRUE,
+  "RICH",           "RICH subindex (current intensity)",       TRUE,  "inferno", TRUE,
+  "GROW",           "GROW subindex (growth + entrants)",       TRUE,  "inferno", TRUE,
+  "OPP",            "OPP subindex (opportunity)",              TRUE,  "inferno", TRUE,
+  "lq_fam",         "Location quotient (focal PSC family)",    TRUE,  "viridis", FALSE,
+  "H",              "Entropy (spending diversification)",      TRUE,  "viridis", FALSE,
+  "oblig_pos_pc_yr","Per-capita obligations (by year)",        FALSE, "magma",   FALSE
 )
 
 # =============================================================================
@@ -209,10 +209,12 @@ server <- function(input, output, session) {
     counties_sf |> inner_join(map_data(), by = "fips")
   })
 
+  # EDIT HERE to change which fields get an inverted color scale (dark = high value) —
+  # add/remove a field from `reverse_pal` in the map_fields table above rather than here.
   pal <- reactive({
     d <- map_data()$value
-    opt <- field_meta()$palette
-    colorNumeric(palette = opt, domain = d, na.color = "#e8e8e8")
+    colorNumeric(palette = field_meta()$palette, domain = d, na.color = "#e8e8e8",
+                reverse = field_meta()$reverse_pal)
   })
 
   # ---- Base map, drawn once; polygons + legend updated via leafletProxy ----
@@ -252,7 +254,7 @@ server <- function(input, output, session) {
         label = lapply(lbl, HTML),
         highlightOptions = highlightOptions(weight = 1.5, color = "#333", bringToFront = TRUE)
       ) |>
-      addLegend(position = "bottomleft", pal = p, values = m$value,
+      addLegend(position = "bottomleft", pal = p, values = m$value[!is.na(m$value)],
                title = field_meta()$label, opacity = 0.9)
   }) |> bindEvent(input$field, input$state, input$year, ignoreNULL = FALSE)
 
@@ -313,8 +315,9 @@ server <- function(input, output, session) {
                  list(type = "line", x0 = .5, x1 = .5, y0 = 0, y1 = 1, line = list(dash = "dot", color = "grey")),
                  list(type = "line", x0 = 0, x1 = 1, y0 = .5, y1 = .5, line = list(dash = "dot", color = "grey"))
                ),
-               margin = list(t = 10, b = 60, l = 60, r = 20),
-               legend = list(orientation = "h", x = 0, y = -0.28, font = list(size = 10)))
+               margin = list(t = 10, b = 45, l = 60, r = 150),
+               legend = list(orientation = "v", x = 1.02, xanchor = "left", y = 0.5, yanchor = "middle",
+                            font = list(size = 10)))
     } else {
       p <- plot_ly(d, x = ~lq_fam, y = ~H, color = ~typology_short(typology),
                    type = "scatter", mode = "markers",
@@ -329,8 +332,9 @@ server <- function(input, output, session) {
                    marker = list(opacity = 0.65, size = 8)) |>
         layout(xaxis = list(title = "LQ (focal PSC family)"),
                yaxis = list(title = "Entropy (diversification)"),
-               margin = list(t = 10, b = 70, l = 60, r = 20),
-               legend = list(orientation = "h", x = 0, y = -0.32, font = list(size = 10)))
+               margin = list(t = 10, b = 45, l = 60, r = 160),
+               legend = list(orientation = "v", x = 1.02, xanchor = "left", y = 0.5, yanchor = "middle",
+                            font = list(size = 10)))
     }
     p |> config(displayModeBar = FALSE)
   })
