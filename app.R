@@ -77,6 +77,17 @@ pri <- pri |> mutate(st_fips = str_sub(fips, 1, 2)) |> left_join(state_lookup, b
 typology <- typology |> mutate(st_fips = str_sub(fips, 1, 2)) |> left_join(state_lookup, by = "st_fips")
 percap_yr <- percap_yr |> mutate(st_fips = str_sub(fips, 1, 2)) |> left_join(state_lookup, by = "st_fips")
 
+# ---------------------------------------------------------------------------
+# EDIT HERE to change what shows on MAP HOVER: this reference table gets
+# left-joined into the map polygons purely for the tooltip — it doesn't
+# affect what field is actually colored/mapped. Add or remove columns here,
+# then update the `lbl <- glue_data(...)` template a few lines below
+# `output$map`/the map-redraw `observe()` block to match.
+county_info <- pri |>
+  select(fips, pop, PRI, RICH, GROW, OPP) |>
+  left_join(typology |> select(fips, lq_fam, H, typology), by = "fips")
+# ---------------------------------------------------------------------------
+
 # ---- County geometry, cached locally after first run (tigris download is slow) ----
 f_geo <- file.path(dir_cache, "counties_simplified.rds")
 if (file.exists(f_geo)) {
@@ -92,6 +103,10 @@ if (file.exists(f_geo)) {
   dir.create(dir_cache, showWarnings = FALSE, recursive = TRUE)
   saveRDS(counties_sf, f_geo)
 }
+
+# Plain (non-spatial) name lookup, for tooltips on the quadrant scatter (which plots
+# pri/typology directly and has no geometry to carry a name column of its own).
+county_names <- counties_sf |> st_drop_geometry() |> select(fips, county_name, STUSPS)
 
 state_choices <- c("All states", sort(unique(na.omit(pri$state_abb))))
 year_choices  <- sort(unique(percap_yr$fy))
@@ -114,43 +129,51 @@ map_fields <- tibble::tribble(
 ui <- page_fillable(
   theme = bs_theme(version = 5, bootswatch = "flatly"),
   title = "USASpending — PRI / LQ / Entropy Explorer",
+  padding = 0,
   tags$style(HTML("
-    #map { height: 100vh !important; }
-    .corner-panel {
-      background: rgba(255,255,255,0.96); padding: 16px 18px; border-radius: 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.25); width: 460px; max-height: 90vh; overflow-y: auto;
+    html, body { height: 100%; margin: 0; }
+    .app-wrap { display: flex; flex-direction: column; height: 100vh; }
+    .map-pane  { flex: 2 1 0; min-height: 0; }           /* ~2/3 of the screen */
+    .bottom-pane {                                        /* ~1/3 of the screen, full width */
+      flex: 1 1 0; min-height: 0; overflow-y: auto;
+      display: flex; gap: 28px; align-items: stretch;
+      padding: 14px 26px; border-top: 1px solid #ddd; background: #fff;
     }
+    .controls-col { flex: 0 0 250px; overflow-y: auto; padding-top: 4px; }
+    .plot-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+    .plot-col .plotly { flex: 1 1 auto; }
   ")),
-  tags$div(style = "position: relative;",
-    leafletOutput("map", height = "100vh"),
-    absolutePanel(
-      top = 16, right = 16, width = 400, class = "corner-panel", draggable = TRUE,
-      style = "z-index: 500;",
+  tags$div(class = "app-wrap",
+    tags$div(class = "map-pane", leafletOutput("map", width = "100%", height = "100%")),
+    tags$div(class = "bottom-pane",
+      tags$div(class = "controls-col",
+        h5("Map field"),
+        selectInput("field", NULL, choices = setNames(map_fields$key, map_fields$label),
+                    selected = "PRI"),
 
-      h5("Map field"),
-      selectInput("field", NULL, choices = setNames(map_fields$key, map_fields$label),
-                  selected = "PRI"),
+        h5("Filters"),
+        selectInput("state", "State", choices = state_choices, selected = "All states"),
+        conditionalPanel(
+          condition = "output.field_is_pooled == false",
+          sliderInput("year", "Fiscal year", min = min(year_choices), max = max(year_choices),
+                      value = max(year_choices), step = 1, sep = "")
+        ),
+        conditionalPanel(
+          condition = "output.field_is_pooled == true",
+          helpText(em("Pooled over the full window — doesn't vary by year."))
+        ),
 
-      h5("Filters"),
-      selectInput("state", "State", choices = state_choices, selected = "All states"),
-      conditionalPanel(
-        condition = "output.field_is_pooled == false",
-        sliderInput("year", "Fiscal year", min = min(year_choices), max = max(year_choices),
-                    value = max(year_choices), step = 1, sep = "")
+        hr(),
+        h5("Quadrants"),
+        radioButtons("quad_view", NULL,
+                     choices = c("PRI: Rich \u00d7 Opportunity" = "pri",
+                                 "Specialization: LQ \u00d7 Diversity" = "typology"),
+                     selected = "pri")
       ),
-      conditionalPanel(
-        condition = "output.field_is_pooled == true",
-        helpText(em("This field is pooled over the full analysis window and doesn't vary by year."))
-      ),
-
-      hr(),
-      h5("Quadrants"),
-      radioButtons("quad_view", NULL,
-                   choices = c("PRI: Rich \u00d7 Opportunity" = "pri",
-                               "Specialization: LQ \u00d7 Diversity" = "typology"),
-                   selected = "pri"),
-      plotlyOutput("quad_plot", height = "420px"),
-      textOutput("quad_note")
+      tags$div(class = "plot-col",
+        plotlyOutput("quad_plot", height = "100%"),
+        textOutput("quad_note")
+      )
     )
   )
 )
@@ -201,9 +224,26 @@ server <- function(input, output, session) {
 
   observe({
     req(nrow(map_data()) > 0)   # avoid a blank/errored render if a filter combo yields nothing
-    m <- map_sf()
+    m <- map_sf() |> left_join(county_info, by = "fips")   # brings in PRI/RICH/GROW/OPP/lq_fam/H/pop for the tooltip
     p <- pal()
-    lbl <- glue("<b>{m$county_name}</b><br/>{field_meta()$label}: {label_number(accuracy = 0.01)(m$value)}")
+
+    # -------------------------------------------------------------------
+    # EDIT HERE to change MAP HOVER TOOLTIP content. `m` has one row per
+    # visible county with: county_name, STUSPS, value (the currently-mapped
+    # field), plus everything pulled in from `county_info` above (pop, PRI,
+    # RICH, GROW, OPP, lq_fam, H, typology). Add a line, reference any of
+    # those columns as m$<column>, wrap in fmt(...) for consistent number
+    # formatting.
+    fmt <- label_number(accuracy = 0.01)
+    lbl <- glue(
+      "<b>{m$county_name}, {m$STUSPS}</b><br/>",
+      "<b>{field_meta()$label}: {fmt(m$value)}</b><br/>",
+      "Population (avg.): {label_comma()(round(m$pop))}<br/>",
+      "PRI composite: {fmt(m$PRI)} &nbsp;",
+      "(RICH {fmt(m$RICH)} / GROW {fmt(m$GROW)} / OPP {fmt(m$OPP)})<br/>",
+      "LQ (focal PSC family): {fmt(m$lq_fam)} &nbsp; Entropy: {fmt(m$H)}"
+    )
+    # -------------------------------------------------------------------
 
     leafletProxy("map") |>
       clearShapes() |> clearControls() |>
@@ -216,7 +256,7 @@ server <- function(input, output, session) {
                title = field_meta()$label, opacity = 0.9)
   }) |> bindEvent(input$field, input$state, input$year, ignoreNULL = FALSE)
 
-  # ---- Corner quadrant scatter ----
+  # ---- Bottom-panel quadrant scatter ----
   quad_data <- reactive({
     if (input$quad_view == "pri") {
       d <- pri |> filter(pop >= 25000) |>
@@ -230,7 +270,7 @@ server <- function(input, output, session) {
       d <- typology
     }
     if (input$state != "All states") d <- d |> filter(state_abb == input$state)
-    d
+    d |> left_join(county_names, by = "fips")   # adds county_name, STUSPS for tooltips
   })
 
   # Short legend labels for the typology view — the full strings ("High-LQ (A), high-diversity
@@ -250,10 +290,21 @@ server <- function(input, output, session) {
     d <- quad_data()
     if (nrow(d) == 0) return(plotly_empty(type = "scatter", mode = "markers"))
 
+    # -------------------------------------------------------------------
+    # EDIT HERE to change QUADRANT SCATTER HOVER TOOLTIP content. `d` has
+    # every column from pri/typology plus county_name/STUSPS from the join
+    # above — reference any of them inside glue(). PRI view and typology
+    # view build separate `text =` strings since they're different data.
     if (input$quad_view == "pri") {
       p <- plot_ly(d, x = ~RICH, y = ~OPP, color = ~quadrant, size = ~pop,
                    type = "scatter", mode = "markers",
-                   text = ~glue("{fips} ({state_abb})"), hoverinfo = "text",
+                   text = ~glue(
+                     "<b>{county_name}, {STUSPS}</b><br>",
+                     "Quadrant: {quadrant}<br>",
+                     "RICH: {round(RICH,2)} &nbsp; OPP: {round(OPP,2)}<br>",
+                     "PRI: {round(PRI,2)} &nbsp; GROW: {round(GROW,2)}<br>",
+                     "Population (avg.): {label_comma()(round(pop))}"
+                   ), hoverinfo = "text",
                    marker = list(sizemode = "area", sizeref = max(d$pop, na.rm = TRUE) / 900,
                                 opacity = 0.65)) |>
         layout(xaxis = list(title = "RICH (current intensity)", range = c(0, 1)),
@@ -267,7 +318,14 @@ server <- function(input, output, session) {
     } else {
       p <- plot_ly(d, x = ~lq_fam, y = ~H, color = ~typology_short(typology),
                    type = "scatter", mode = "markers",
-                   text = ~glue("{fips} ({state_abb})<br>{typology}"), hoverinfo = "text",
+                   text = ~glue(
+                     "<b>{county_name}, {STUSPS}</b><br>",
+                     "{typology}<br>",
+                     "LQ: {round(lq_fam,2)} &nbsp; Entropy: {round(H,2)} ",
+                     "({round(H_norm,2)} normalized)<br>",
+                     "Categories present: {n_cat} &nbsp; Total obligations: ",
+                     "{label_currency(scale_cut = cut_short_scale())(total)}"
+                   ), hoverinfo = "text",
                    marker = list(opacity = 0.65, size = 8)) |>
         layout(xaxis = list(title = "LQ (focal PSC family)"),
                yaxis = list(title = "Entropy (diversification)"),
