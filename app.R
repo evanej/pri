@@ -26,17 +26,30 @@ library(glue)
 library(plotly)
 library(scales)
 library(tigris)
+library(rmapshaper)
 options(tigris_use_cache = TRUE)
 
-# ---- Config: point these at your project's actual output locations ----------
-dir_proj <- if (.Platform$OS.type == "windows") {
+# ---- Config: local Dropbox path if present, else the repo's own data/ folders ----
+# On the developer's machine, the full project (with the live DuckDB/Parquet pipeline)
+# lives under Dropbox and this points there so the dashboard always reads the latest
+# exports. When deployed from GitHub (Posit Connect Cloud, shinyapps.io, etc.), that
+# Dropbox path doesn't exist on the build machine — the app falls back to the small
+# committed CSVs under this repo's own data/aggregated/ and data/tables/ instead.
+dir_proj_local <- if (.Platform$OS.type == "windows") {
   "D:/EVAN/EEJC Dropbox/Evan Johnson/US spending Evan & Maryann"
 } else {
   "/Users/arclight/Library/CloudStorage/Dropbox-EEJC/Evan Johnson/US spending Evan & Maryann"
 }
-dir_agg   <- file.path(dir_proj, "data/aggregated")
-dir_tab   <- file.path(dir_proj, "output/tables")
-dir_cache <- file.path(dir_proj, "data/cache")
+
+if (dir.exists(dir_proj_local)) {
+  dir_agg <- file.path(dir_proj_local, "data/aggregated")
+  dir_tab <- file.path(dir_proj_local, "output/tables")
+} else {
+  dir_agg <- "data/aggregated"   # relative to app.R — i.e. this repo's own data/
+  dir_tab <- "data/tables"
+}
+dir_cache <- "data/cache"
+dir.create(dir_cache, showWarnings = FALSE, recursive = TRUE)
 
 f_pri       <- file.path(dir_agg, "pri_county_v01.csv")
 f_typology  <- list.files(dir_tab, "^q7_lq_entropy_typology_.*\\.csv$", full.names = TRUE)[1]
