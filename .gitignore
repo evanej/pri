@@ -1,0 +1,24 @@
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# renv (if you adopt it — recommended, see README)
+renv/library/
+renv/local/
+renv/cellar/
+renv/staging/
+
+# App-local caches — regenerated automatically on first run, shouldn't be committed
+data/cache/counties_simplified.rds
+
+# Raw/large project data — this repo ships only the small pre-aggregated CSVs under data/
+# actually used by app.R. Never commit the Parquet warehouse or Dropbox-synced raw extracts.
+*.parquet
+data/tx_allagency_parquet/
+
+# OS/editor cruft
+.DS_Store
+.vscode/
