@@ -123,6 +123,26 @@ map_fields <- tibble::tribble(
   "oblig_pos_pc_yr","Per-capita obligations (by year)",        FALSE, "magma",   FALSE
 )
 
+# ---------------------------------------------------------------------------
+# EDIT HERE to change the plain-language tooltip text shown next to the
+# field selector and the quadrant toggle. Each name below must match a
+# `key` in map_fields (for field_descriptions) or a `choices` value in the
+# quad_view radioButtons (for quad_descriptions) — see the UI section.
+field_descriptions <- c(
+  PRI = "The Procurement Readiness Index (PRI) is a single 0-1 score summarizing three things about a county: how much federal contracting is already happening there, how fast that's been growing, and how much unclaimed opportunity remains. Higher = already active and still has room to grow.",
+  RICH = "How much federal procurement spending a county already receives per person, relative to other counties \u2014 the 'current intensity' piece of the PRI. Higher = more federal contracting dollars already flowing here.",
+  GROW = "How fast a county's federal contracting has grown recently, plus how many new (first-time) contractors have shown up. Higher = momentum \u2014 this county's federal presence is expanding, not just large.",
+  OPP = "An estimate of unclaimed opportunity: counties with capacity relevant to federal contracting (skilled workforce, related industries) that haven't yet captured much federal spending. Higher = looks primed for more federal activity than it currently has.",
+  lq_fam = "Location Quotient (LQ) compares how concentrated one category of federal spending is in this county versus the nation as a whole. LQ = 1 means the county matches the national average; above 1 means the county specializes in that category more than most places do.",
+  H = "Entropy measures how spread out a county's federal contracts are across different types of spending, rather than concentrated in one or two categories. Higher = more diversified (many kinds of federal work); lower = more specialized (most dollars going to one type of work).",
+  oblig_pos_pc_yr = "Total federal obligations (net of cancellations), divided by population, for the fiscal year selected below \u2014 a simple measure of how much federal spending activity is happening relative to a county's size."
+)
+quad_descriptions <- c(
+  pri = "Each dot is a county, positioned by RICH (current federal-contracting intensity) and OPP (untapped opportunity). 'Rich & Open' counties score high on both; 'Underserved' counties score low on both; the other two quadrants are strong on just one dimension.",
+  typology = "Each dot is a county, positioned by LQ (how specialized its spending is in the focal category) and Entropy (how diversified its overall federal spending mix is). Shows whether a county's federal base is narrow and concentrated, or broad and diversified."
+)
+# ---------------------------------------------------------------------------
+
 # =============================================================================
 # UI
 # =============================================================================
@@ -147,7 +167,13 @@ ui <- page_fillable(
     tags$div(class = "map-pane", leafletOutput("map", width = "100%", height = "100%")),
     tags$div(class = "bottom-pane",
       tags$div(class = "controls-col",
-        h5("Map field"),
+        h5("Map field",
+           tooltip(
+             tags$span(icon("circle-info"),
+                      style = "color:#888; cursor:help; margin-left:6px; font-size:0.75em;"),
+             "Select a field to see what it means.",   # placeholder — updated server-side on load/change
+             id = "field_tip", placement = "right"
+           )),
         selectInput("field", NULL, choices = setNames(map_fields$key, map_fields$label),
                     selected = "PRI"),
 
@@ -164,7 +190,13 @@ ui <- page_fillable(
         ),
 
         hr(),
-        h5("Quadrants"),
+        h5("Quadrants",
+           tooltip(
+             tags$span(icon("circle-info"),
+                      style = "color:#888; cursor:help; margin-left:6px; font-size:0.75em;"),
+             "Select a view to see what it means.",
+             id = "quad_tip", placement = "right"
+           )),
         radioButtons("quad_view", NULL,
                      choices = c("PRI: Rich \u00d7 Opportunity" = "pri",
                                  "Specialization: LQ \u00d7 Diversity" = "typology"),
@@ -182,6 +214,18 @@ ui <- page_fillable(
 # Server
 # =============================================================================
 server <- function(input, output, session) {
+
+  # EDIT HERE (or edit the text itself up in field_descriptions/quad_descriptions near
+  # map_fields) to change what the info-icon tooltips say. ignoreInit = FALSE so the
+  # right text is already showing for the default selection on first load, not just
+  # after the user changes something.
+  observeEvent(input$field, {
+    update_tooltip("field_tip", field_descriptions[[input$field]])
+  }, ignoreInit = FALSE)
+
+  observeEvent(input$quad_view, {
+    update_tooltip("quad_tip", quad_descriptions[[input$quad_view]])
+  }, ignoreInit = FALSE)
 
   field_is_pooled <- reactive({
     map_fields$pooled[map_fields$key == input$field]
